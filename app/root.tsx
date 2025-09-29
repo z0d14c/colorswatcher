@@ -19,8 +19,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Meta />
         <Links />
       </head>
-      <body>
-        {children}
+      <body className="min-h-screen bg-slate-950 font-sans text-slate-100 antialiased">
+        <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900">
+          {children}
+        </div>
         <ScrollRestoration />
         <Scripts />
       </body>
