@@ -1,18 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import type { ColorDescriptor } from "../colorApi.server";
+import type { ColorDescriptor } from "../types.server";
 import { segmentHueSpace } from "../segmentHueSpace.server";
+import { normalizeHue } from "../utils.server";
 
 interface FakeRange {
   readonly start: number;
   readonly end: number;
   readonly name: string;
 }
-
-const normalizeHue = (hue: number): number => {
-  const wrapped = hue % 360;
-  return wrapped < 0 ? wrapped + 360 : wrapped;
-};
 
 const createFakeSampler = (ranges: FakeRange[]) => {
   return async (hue: number): Promise<ColorDescriptor> => {
