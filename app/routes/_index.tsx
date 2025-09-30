@@ -3,8 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 
 import type { Route } from "./+types/_index";
 
-import type { HueSegment } from "~/lib/segmentHueSpace.server";
 import { segmentHueSpace } from "~/lib/segmentHueSpace.server";
+import type { HueSegment } from "~/lib/types.server";
 
 const DEFAULT_SATURATION = 60;
 const DEFAULT_LIGHTNESS = 50;
