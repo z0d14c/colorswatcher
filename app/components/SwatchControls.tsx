@@ -2,6 +2,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { Form } from "react-router";
 
 import { clampPercentage } from "~/lib/color-utils";
+import type { ColorSource } from "~/lib/types.server";
 
 interface SwatchControlsProps {
   readonly saturation: number;
@@ -13,6 +14,13 @@ interface SwatchControlsProps {
   readonly defaultSaturation: number;
   readonly defaultLightness: number;
   readonly isUpdating: boolean;
+  readonly source: ColorSource;
+  readonly requestedSource: ColorSource;
+  readonly sourceValue: ColorSource;
+  readonly onSourceChange: Dispatch<SetStateAction<ColorSource>>;
+  readonly isDatabaseAvailable: boolean;
+  readonly cacheHits: number;
+  readonly cacheMisses: number;
 }
 
 export function SwatchControls({
@@ -25,7 +33,37 @@ export function SwatchControls({
   defaultSaturation,
   defaultLightness,
   isUpdating,
+  source,
+  requestedSource,
+  sourceValue,
+  onSourceChange,
+  isDatabaseAvailable,
+  cacheHits,
+  cacheMisses,
 }: SwatchControlsProps) {
+  const renderSourceStatus = () => {
+    if (sourceValue !== requestedSource) {
+      return sourceValue === "database"
+        ? "Submit the form to switch to the cached color database."
+        : "Submit the form to switch back to the live API.";
+    }
+
+    if (source === "database") {
+      if (cacheMisses > 0) {
+        const plural = cacheMisses === 1 ? "" : "s";
+        return `Using cached color database (${cacheHits} hits, ${cacheMisses} fallback${plural} to The Color API).`;
+      }
+
+      return `Using cached color database (${cacheHits} hits).`;
+    }
+
+    if (!isDatabaseAvailable && requestedSource === "database") {
+      return "Color database not found. Falling back to The Color API.";
+    }
+
+    return "Fetching colors from The Color API.";
+  };
+
   return (
     <Form method="get" className="grid gap-8 rounded-xl border border-white/10 bg-slate-900/40 p-6 shadow-xl backdrop-blur">
       <div className="grid gap-6 sm:grid-cols-2">
@@ -91,6 +129,24 @@ export function SwatchControls({
               className="w-24 rounded-md border border-white/10 bg-slate-950/60 px-3 py-2 text-sm font-medium text-slate-100 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400/40"
             />
           </label>
+        </fieldset>
+
+        <fieldset className="space-y-4">
+          <legend className="text-sm font-medium text-slate-200">Data source</legend>
+          <label className="flex flex-col gap-3" htmlFor="source-select">
+            <span className="text-xs uppercase tracking-wide text-slate-400">Color lookup strategy</span>
+            <select
+              id="source-select"
+              name="source"
+              value={sourceValue}
+              onChange={(event) => onSourceChange(event.currentTarget.value as ColorSource)}
+              className="w-full rounded-md border border-white/10 bg-slate-950/60 px-3 py-2 text-sm font-medium text-slate-100 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400/40"
+            >
+              <option value="api">The Color API (live)</option>
+              <option value="database">Cached SQLite database</option>
+            </select>
+          </label>
+          <p className="text-xs text-slate-400">{renderSourceStatus()}</p>
         </fieldset>
       </div>
 

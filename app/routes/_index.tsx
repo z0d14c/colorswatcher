@@ -4,7 +4,9 @@ import { useLoaderData, useNavigation } from "react-router";
 import type { Route } from "./+types/_index";
 
 import { segmentHueSpace } from "~/lib/segmentHueSpace.server";
-import type { HueSegment } from "~/lib/types.server";
+import { getColorByHsl } from "~/lib/colorApi.server";
+import { getColorFromDatabase, isDatabaseAvailable } from "~/lib/colorDatabase.server";
+import type { ColorSource, HueSegment } from "~/lib/types.server";
 import { normalizeHue, readPercentageParam } from "~/lib/color-utils";
 import { SwatchControls } from "~/components/SwatchControls";
 import { SwatchesSection } from "~/components/SwatchesSection";
@@ -16,22 +18,89 @@ export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const saturation = readPercentageParam(url, "s", DEFAULT_SATURATION);
   const lightness = readPercentageParam(url, "l", DEFAULT_LIGHTNESS);
+  const requestedSourceParam = url.searchParams.getAll("source").at(-1);
+  const requestedSource: ColorSource =
+    requestedSourceParam === "database" ? "database" : "api";
+
+  const databaseAvailable = isDatabaseAvailable();
+  const source: ColorSource =
+    requestedSource === "database" && databaseAvailable ? "database" : "api";
+
+  const cacheStats = { hits: 0, misses: 0 };
+
+  const sample =
+    source === "database"
+      ? async (hue: number) => {
+          const cached = getColorFromDatabase({ hue, saturation, lightness });
+
+          if (cached) {
+            cacheStats.hits += 1;
+            return cached;
+          }
+
+          cacheStats.misses += 1;
+          return getColorByHsl({ hue, saturation, lightness });
+        }
+      : undefined;
 
   try {
-    const segments = await segmentHueSpace({ saturation, lightness });
-    return { segments, saturation, lightness, error: null as string | null };
+    const segments = await segmentHueSpace(
+      sample
+        ? {
+            saturation,
+            lightness,
+            sample,
+          }
+        : {
+            saturation,
+            lightness,
+          },
+    );
+
+    return {
+      segments,
+      saturation,
+      lightness,
+      source,
+      requestedSource,
+      isDatabaseAvailable: databaseAvailable,
+      cacheHits: cacheStats.hits,
+      cacheMisses: cacheStats.misses,
+      error: null as string | null,
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to load colors.";
-    return { segments: [], saturation, lightness, error: message };
+    return {
+      segments: [],
+      saturation,
+      lightness,
+      source,
+      requestedSource,
+      isDatabaseAvailable: databaseAvailable,
+      cacheHits: cacheStats.hits,
+      cacheMisses: cacheStats.misses,
+      error: message,
+    };
   }
 }
 
 type LoaderData = Awaited<ReturnType<typeof loader>>;
 
 export default function Index() {
-  const { segments, saturation, lightness, error } = useLoaderData<LoaderData>();
+  const {
+    segments,
+    saturation,
+    lightness,
+    error,
+    source,
+    requestedSource,
+    isDatabaseAvailable,
+    cacheHits,
+    cacheMisses,
+  } = useLoaderData<LoaderData>();
   const [sValue, setSValue] = useState(saturation);
   const [lValue, setLValue] = useState(lightness);
+  const [sourceValue, setSourceValue] = useState<ColorSource>(requestedSource);
   const navigation = useNavigation();
   const isUpdatingSwatches = navigation.state !== "idle";
 
@@ -42,6 +111,10 @@ export default function Index() {
   useEffect(() => {
     setLValue(lightness);
   }, [lightness]);
+
+  useEffect(() => {
+    setSourceValue(requestedSource);
+  }, [requestedSource]);
 
   const swatches = useMemo(() => {
     const seen = new Map<string, HueSegment>();
@@ -83,6 +156,13 @@ export default function Index() {
         defaultSaturation={DEFAULT_SATURATION}
         defaultLightness={DEFAULT_LIGHTNESS}
         isUpdating={isUpdatingSwatches}
+        source={source}
+        requestedSource={requestedSource}
+        sourceValue={sourceValue}
+        onSourceChange={setSourceValue}
+        isDatabaseAvailable={isDatabaseAvailable}
+        cacheHits={cacheHits}
+        cacheMisses={cacheMisses}
       />
 
       <SwatchesSection

@@ -33,3 +33,5 @@ export interface SegmentHueSpaceOptions {
 }
 
 export type ColorSample = ColorDescriptor;
+
+export type ColorSource = "api" | "database";
