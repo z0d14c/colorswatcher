@@ -13,9 +13,7 @@ export interface SegmentHueSpaceOptions {
 }
 
 // Minimum width we will subdivide; narrower bands would be visually indistinguishable.
-const MIN_SPAN = 0.5;
-// Heuristic cap for considering a range "uniform" before forcing more samples.
-const MAX_UNIFORM_SPAN = 6;
+const MIN_SPAN = 1;
 
 // Cache keyed by the saturation/lightness tuple to avoid redundant segmentation.
 // Development rebuilds re-evaluate this module on every request, so the map clears
@@ -105,7 +103,7 @@ async function createSegments(
     return [];
   }
 
-  const sorted = Array.from(new Set<number>([...knownHues, 0]))
+  const sorted = Array.from(new Set<number>([...knownHues]))
     .filter((hue) => hue >= 0 && hue < 360)
     .sort((a, b) => a - b);
 
@@ -134,7 +132,8 @@ interface SubdivideInput {
   readonly endHue: number;
 }
 
-// Recursively sample until a span is either uniform or too small to matter.
+// Recursively sample until a span is either uniform (begin, middle, end are the same) 
+// or we reach the base case of MIN_SPAN
 async function subdivideRange({
   sampler,
   startHue,
@@ -146,17 +145,9 @@ async function subdivideRange({
   }
 
   const startColor = await sampler.get(startHue);
-  const endColor = endHue === 360 ? startColor : await sampler.get(endHue);
+  const endColor = await sampler.get(endHue);
 
-  if (span > MAX_UNIFORM_SPAN) {
-    const midpoint = startHue + span / 2;
-    await sampler.get(midpoint % 360);
-    await subdivideRange({ sampler, startHue, endHue: midpoint });
-    await subdivideRange({ sampler, startHue: midpoint, endHue });
-    return;
-  }
-
-  const midpoint = startHue + span / 2;
+  const midpoint = Math.ceil(startHue + span / 2);
   const middleColor = await sampler.get(midpoint % 360);
 
   const namesMatch =
@@ -217,7 +208,7 @@ const mergeSegments = (segments: HueSegment[]): HueSegment[] => {
 export async function segmentHueSpace({
   saturation,
   lightness,
-  sample,
+  sample, // primarily for the purpose of testing (skipping the dependency on the color api)
 }: SegmentHueSpaceOptions): Promise<HueSegment[]> {
   const sampler = new AdaptiveSampler(
     sample ?? ((hue) => getColorByHsl({ hue, saturation, lightness })),
