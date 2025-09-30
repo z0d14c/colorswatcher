@@ -1,16 +1,6 @@
-import { getColorByHsl, type ColorDescriptor } from "./colorApi.server";
-
-export interface HueSegment {
-  readonly startHue: number;
-  readonly endHue: number;
-  readonly color: ColorDescriptor;
-}
-
-export interface SegmentHueSpaceOptions {
-  readonly saturation: number;
-  readonly lightness: number;
-  readonly sample?: (hue: number) => Promise<ColorDescriptor>;
-}
+import { AdaptiveSampler } from "./adaptiveSampler.server";
+import { getColorByHsl } from "./colorApi.server";
+import type { HueSegment, SegmentHueSpaceOptions } from "./types.server";
 
 // Minimum width we will subdivide; narrower bands would be visually indistinguishable.
 const MIN_SPAN = 1;
@@ -20,62 +10,6 @@ const MIN_SPAN = 1;
 // between refreshes; the production build runs inside a long-lived worker where the
 // memo persists and identical S/L pairs reuse the in-flight promise.
 const memo = new Map<string, Promise<HueSegment[]>>();
-
-// Collapse arbitrary hue input to a canonical form so cache keys remain stable.
-const normalizeHue = (hue: number): number => {
-  const wrapped = hue % 360;
-  if (Number.isNaN(wrapped)) {
-    return 0;
-  }
-
-  return wrapped < 0 ? wrapped + 360 : wrapped;
-};
-
-// Deduplicates sampler requests while preserving the asynchronous contract.
-class AdaptiveSampler {
-  private readonly fetcher: (hue: number) => Promise<ColorDescriptor>;
-  private readonly promises = new Map<number, Promise<ColorDescriptor>>();
-  private readonly values = new Map<number, ColorDescriptor>();
-
-  constructor(fetcher: (hue: number) => Promise<ColorDescriptor>) {
-    this.fetcher = fetcher;
-  }
-
-  private keyFor(hue: number): number {
-    const normalized = normalizeHue(hue);
-    return Number(normalized.toFixed(6));
-  }
-
-  async get(hue: number): Promise<ColorDescriptor> {
-    const key = this.keyFor(hue);
-    const existing = this.promises.get(key);
-    if (existing) {
-      return existing;
-    }
-
-    const promise = this.fetcher(normalizeHue(hue)).then((value) => {
-      this.values.set(key, value);
-      return value;
-    });
-
-    this.promises.set(key, promise);
-
-    try {
-      return await promise;
-    } catch (error) {
-      this.promises.delete(key);
-      throw error;
-    }
-  }
-
-  getCached(hue: number): ColorDescriptor | undefined {
-    return this.values.get(this.keyFor(hue));
-  }
-
-  getKnownHues(): number[] {
-    return Array.from(this.values.keys()).sort((a, b) => a - b);
-  }
-}
 
 // Kick off adaptive sampling and turn the sampled hues into merged segments.
 async function createSegments(
@@ -235,8 +169,4 @@ export async function segmentHueSpace({
     memo.delete(key);
     throw error;
   }
-}
-
-export function clearSegmentCache(): void {
-  memo.clear();
 }
