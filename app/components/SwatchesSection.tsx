@@ -17,6 +17,16 @@ const swatchCountMessage = (count: number): string => {
 };
 
 export function SwatchesSection({ swatches, error, isUpdating }: SwatchesSectionProps) {
+  const message = error
+    ? null
+    : swatches.length === 0
+      ? isUpdating
+        ? "Discovering color names…"
+        : "No unique color names were found for this S/L combination."
+      : swatchCountMessage(swatches.length);
+
+  const showOverlay = isUpdating && swatches.length === 0;
+
   return (
     <section className="mt-12">
       <h2 className="text-xl font-semibold text-slate-100">Distinct names</h2>
@@ -25,7 +35,7 @@ export function SwatchesSection({ swatches, error, isUpdating }: SwatchesSection
           Unable to retrieve color names right now: {error}
         </p>
       ) : (
-        <p className="mt-2 text-sm text-slate-400">{swatchCountMessage(swatches.length)}</p>
+        <p className="mt-2 text-sm text-slate-400">{message}</p>
       )}
 
       <div className="relative mt-6" aria-live="polite" aria-busy={isUpdating}>
@@ -34,7 +44,7 @@ export function SwatchesSection({ swatches, error, isUpdating }: SwatchesSection
             <SwatchCard key={segment.color.name} segment={segment} />
           ))}
         </div>
-        {isUpdating && (
+        {showOverlay && (
           <div className="absolute inset-0 flex items-center justify-center rounded-xl border border-white/5 bg-slate-950/60 backdrop-blur-sm">
             <div className="flex items-center gap-3 text-sm font-medium text-slate-200">
               <svg className="h-5 w-5 animate-spin text-slate-200" viewBox="0 0 24 24" aria-hidden="true">

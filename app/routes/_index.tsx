@@ -3,7 +3,6 @@ import { useLoaderData, useNavigation } from "react-router";
 
 import type { Route } from "./+types/_index";
 
-import { segmentHueSpace } from "~/lib/segmentHueSpace.server";
 import type { HueSegment } from "~/lib/types.server";
 import { normalizeHue, readPercentageParam } from "~/lib/color-utils";
 import { SwatchControls } from "~/components/SwatchControls";
@@ -17,23 +16,90 @@ export async function loader({ request }: Route.LoaderArgs) {
   const saturation = readPercentageParam(url, "s", DEFAULT_SATURATION);
   const lightness = readPercentageParam(url, "l", DEFAULT_LIGHTNESS);
 
-  try {
-    const segments = await segmentHueSpace({ saturation, lightness });
-    return { segments, saturation, lightness, error: null as string | null };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to load colors.";
-    return { segments: [], saturation, lightness, error: message };
-  }
+  const streamParams = new URLSearchParams({
+    s: saturation.toString(),
+    l: lightness.toString(),
+  });
+
+  return {
+    saturation,
+    lightness,
+    streamPath: `/api/segments?${streamParams.toString()}`,
+  };
 }
 
 type LoaderData = Awaited<ReturnType<typeof loader>>;
 
 export default function Index() {
-  const { segments, saturation, lightness, error } = useLoaderData<LoaderData>();
+  const { saturation, lightness, streamPath } = useLoaderData<LoaderData>();
+  const [segments, setSegments] = useState<HueSegment[]>([]);
+  const [streamError, setStreamError] = useState<string | null>(null);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [sValue, setSValue] = useState(saturation);
   const [lValue, setLValue] = useState(lightness);
   const navigation = useNavigation();
   const isUpdatingSwatches = navigation.state !== "idle";
+
+  useEffect(() => {
+    setSegments([]);
+    setStreamError(null);
+
+    if (typeof EventSource === "undefined") {
+      return;
+    }
+
+    let isActive = true;
+    const eventSource = new EventSource(streamPath);
+    setIsStreaming(true);
+
+    const handleSegments = (event: MessageEvent<string>) => {
+      if (!isActive) {
+        return;
+      }
+
+      try {
+        const payload = JSON.parse(event.data) as { segments: HueSegment[] };
+        setSegments(payload.segments);
+      } catch (error) {
+        console.error("Failed to parse segment payload", error);
+        setStreamError("Received malformed color data.");
+        eventSource.close();
+        setIsStreaming(false);
+      }
+    };
+
+    const handleComplete = () => {
+      if (!isActive) {
+        return;
+      }
+      setIsStreaming(false);
+      eventSource.close();
+    };
+
+    const handleError = () => {
+      if (!isActive) {
+        return;
+      }
+      setStreamError("Lost connection to the color stream.");
+      setIsStreaming(false);
+      eventSource.close();
+    };
+
+    const segmentsListener = (event: Event) =>
+      handleSegments(event as MessageEvent<string>);
+    const completeListener = () => handleComplete();
+
+    eventSource.addEventListener("segments", segmentsListener);
+    eventSource.addEventListener("complete", completeListener);
+    eventSource.onerror = handleError;
+
+    return () => {
+      isActive = false;
+      eventSource.removeEventListener("segments", segmentsListener);
+      eventSource.removeEventListener("complete", completeListener);
+      eventSource.close();
+    };
+  }, [streamPath]);
 
   useEffect(() => {
     setSValue(saturation);
@@ -59,6 +125,8 @@ export default function Index() {
     });
   }, [segments]);
 
+  const isLoading = isUpdatingSwatches || isStreaming;
+
   return (
     <main className="mx-auto w-full max-w-screen-2xl px-4 py-12 sm:px-6 lg:px-10">
       <header className="mb-10 flex flex-col gap-2">
@@ -82,13 +150,13 @@ export default function Index() {
         onLightnessChange={setLValue}
         defaultSaturation={DEFAULT_SATURATION}
         defaultLightness={DEFAULT_LIGHTNESS}
-        isUpdating={isUpdatingSwatches}
+        isUpdating={isLoading}
       />
 
       <SwatchesSection
         swatches={swatches}
-        error={error}
-        isUpdating={isUpdatingSwatches}
+        error={streamError}
+        isUpdating={isLoading}
       />
     </main>
   );

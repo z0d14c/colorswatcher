@@ -1,6 +1,7 @@
 import { AdaptiveSampler } from "./adaptiveSampler.server";
 import { getColorByHsl } from "./colorApi.server";
 import type { HueSegment, SegmentHueSpaceOptions } from "./types.server";
+import { normalizeHue } from "./utils.server";
 
 // Minimum width we will subdivide; narrower bands would be visually indistinguishable.
 const MIN_SPAN = 1;
@@ -18,20 +19,18 @@ async function createSegments(
   lightness: number,
 ): Promise<HueSegment[]> {
   if (saturation === 0 || lightness === 0 || lightness === 100) {
-    const color = await sampler.get(0);
-    return [
-      {
-        startHue: 0,
-        endHue: 360,
-        color,
-      },
-    ];
+    await sampler.get(0);
+    return buildSegmentsFromSampler(sampler);
   }
 
   await sampler.get(0);
 
   await subdivideRange({ sampler, startHue: 0, endHue: 360 });
 
+  return buildSegmentsFromSampler(sampler);
+}
+
+function buildSegmentsFromSampler(sampler: AdaptiveSampler): HueSegment[] {
   const knownHues = sampler.getKnownHues();
   if (knownHues.length === 0) {
     return [];
@@ -55,9 +54,7 @@ async function createSegments(
     segments.push({ startHue, endHue, color });
   }
 
-  const merged = mergeSegments(segments);
-
-  return merged;
+  return mergeSegments(segments);
 }
 
 interface SubdivideInput {
@@ -169,4 +166,103 @@ export async function segmentHueSpace({
     memo.delete(key);
     throw error;
   }
+}
+
+const encoder = new TextEncoder();
+
+function emitSegments(
+  sampler: AdaptiveSampler,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  lastPayloadRef: { current: string | null },
+): void {
+  const segments = buildSegmentsFromSampler(sampler);
+  const payload = JSON.stringify({ segments });
+
+  if (payload === lastPayloadRef.current) {
+    return;
+  }
+
+  lastPayloadRef.current = payload;
+  controller.enqueue(encoder.encode(`event: segments\ndata: ${payload}\n\n`));
+}
+
+async function streamRange(
+  sampler: AdaptiveSampler,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  saturation: number,
+  lightness: number,
+): Promise<void> {
+  const lastPayload = { current: null as string | null };
+
+  const sampleHue = async (hue: number) => {
+    const normalized = normalizeHue(hue);
+    const cached = sampler.getCached(normalized);
+    if (cached) {
+      return cached;
+    }
+
+    const color = await sampler.get(normalized);
+    emitSegments(sampler, controller, lastPayload);
+    return color;
+  };
+
+  const finish = () => {
+    controller.enqueue(encoder.encode("event: complete\ndata: {}\n\n"));
+    controller.close();
+  };
+
+  if (saturation === 0 || lightness === 0 || lightness === 100) {
+    await sampleHue(0);
+    emitSegments(sampler, controller, lastPayload);
+    finish();
+    return;
+  }
+
+  await sampleHue(0);
+
+  const stack: Array<{ startHue: number; endHue: number }> = [
+    { startHue: 0, endHue: 360 },
+  ];
+
+  while (stack.length > 0) {
+    const { startHue, endHue } = stack.pop()!;
+    const span = endHue - startHue;
+    if (span <= MIN_SPAN) {
+      continue;
+    }
+
+    const startColor = await sampleHue(startHue);
+    const endColor = await sampleHue(endHue);
+    const midpoint = Math.ceil(startHue + span / 2);
+    const middleColor = await sampleHue(midpoint % 360);
+
+    const namesMatch =
+      startColor.name === middleColor.name && middleColor.name === endColor.name;
+
+    if (!namesMatch) {
+      stack.push({ startHue, endHue: midpoint });
+      stack.push({ startHue: midpoint, endHue });
+    }
+  }
+
+  emitSegments(sampler, controller, lastPayload);
+  finish();
+}
+
+export function segmentHueSpaceStream({
+  saturation,
+  lightness,
+  sample,
+}: SegmentHueSpaceOptions): ReadableStream<Uint8Array> {
+  const sampler = new AdaptiveSampler(
+    sample ?? ((hue) => getColorByHsl({ hue, saturation, lightness })),
+  );
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      streamRange(sampler, controller, saturation, lightness).catch((error) => {
+        controller.error(error);
+      });
+    },
+  });
 }
