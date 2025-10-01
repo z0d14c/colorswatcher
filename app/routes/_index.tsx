@@ -37,6 +37,7 @@ export default function Index() {
     segments: streamedSegments,
     hasStreamedPartial,
   } = useStreamedSegments({ navigation, initialSegments: segments });
+  const hasPendingChanges = sValue !== saturation || lValue !== lightness;
 
   useEffect(() => {
     setSValue(saturation);
@@ -88,6 +89,7 @@ export default function Index() {
         defaultSaturation={DEFAULT_SATURATION}
         defaultLightness={DEFAULT_LIGHTNESS}
         isUpdating={isUpdatingSwatches}
+        isDirty={hasPendingChanges}
       />
 
       <SwatchesSection
