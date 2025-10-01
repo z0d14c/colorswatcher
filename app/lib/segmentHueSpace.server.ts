@@ -5,39 +5,22 @@ import type { HueSegment, SegmentHueSpaceOptions } from "./types.server";
 // Minimum width we will subdivide; narrower bands would be visually indistinguishable.
 const MIN_SPAN = 1;
 
-// Cache keyed by the saturation/lightness tuple to avoid redundant segmentation.
+// Cache keyed by the saturation/lightness tuple to avoid redundant segmentation
+// when computing the full set of segments up front (for SSR or tests).
 // Development rebuilds re-evaluate this module on every request, so the map clears
 // between refreshes; the production build runs inside a long-lived worker where the
 // memo persists and identical S/L pairs reuse the in-flight promise.
 const memo = new Map<string, Promise<HueSegment[]>>();
 
-// Kick off adaptive sampling and turn the sampled hues into merged segments.
-async function createSegments(
+const buildSegmentsFromKnownHues = (
   sampler: AdaptiveSampler,
-  saturation: number,
-  lightness: number,
-): Promise<HueSegment[]> {
-  if (saturation === 0 || lightness === 0 || lightness === 100) {
-    const color = await sampler.get(0);
-    return [
-      {
-        startHue: 0,
-        endHue: 360,
-        color,
-      },
-    ];
-  }
-
-  await sampler.get(0);
-
-  await subdivideRange({ sampler, startHue: 0, endHue: 360 });
-
-  const knownHues = sampler.getKnownHues();
+  knownHues: readonly number[],
+): HueSegment[] => {
   if (knownHues.length === 0) {
     return [];
   }
 
-  const sorted = Array.from(new Set<number>([...knownHues]))
+  const sorted = Array.from(new Set<number>(knownHues))
     .filter((hue) => hue >= 0 && hue < 360)
     .sort((a, b) => a - b);
 
@@ -55,45 +38,92 @@ async function createSegments(
     segments.push({ startHue, endHue, color });
   }
 
-  const merged = mergeSegments(segments);
+  return mergeSegments(segments);
+};
 
-  return merged;
-}
+// Kick off adaptive sampling and turn the sampled hues into merged segments,
+// calling `onProgress` whenever a new hue discovery changes the resulting
+// segments.
+async function createSegments(
+  sampler: AdaptiveSampler,
+  saturation: number,
+  lightness: number,
+  onProgress?: (segments: HueSegment[]) => void,
+): Promise<HueSegment[]> {
+  const emit = (segments: HueSegment[]): void => {
+    if (segments.length > 0) {
+      onProgress?.(segments);
+    }
+  };
 
-interface SubdivideInput {
-  readonly sampler: AdaptiveSampler;
-  readonly startHue: number;
-  readonly endHue: number;
-}
-
-// Recursively sample until a span is either uniform (begin, middle, end are the same) 
-// or we reach the base case of MIN_SPAN
-async function subdivideRange({
-  sampler,
-  startHue,
-  endHue,
-}: SubdivideInput): Promise<void> {
-  const span = endHue - startHue;
-  if (span <= MIN_SPAN) {
-    return;
+  if (saturation === 0 || lightness === 0 || lightness === 100) {
+    const color = await sampler.get(0);
+    const grayscale = [
+      {
+        startHue: 0,
+        endHue: 360,
+        color,
+      },
+    ];
+    emit(grayscale);
+    return grayscale;
   }
 
-  const startColor = await sampler.get(startHue);
-  const endColor = await sampler.get(endHue);
+  const queue: Array<{ startHue: number; endHue: number }> = [
+    { startHue: 0, endHue: 360 },
+  ];
 
-  const midpoint = Math.ceil(startHue + span / 2);
-  const middleColor = await sampler.get(midpoint % 360);
+  await sampler.get(0);
 
-  const namesMatch =
-    startColor.name === middleColor.name &&
-    middleColor.name === endColor.name;
+  let lastSignature = "";
+  let lastSegments: HueSegment[] = [];
 
-  if (namesMatch) {
-    return;
+  const refreshSegments = (): HueSegment[] => {
+    const knownHues = sampler.getKnownHues();
+    const signature = knownHues.join(",");
+    if (signature === lastSignature) {
+      return lastSegments;
+    }
+
+    lastSignature = signature;
+    lastSegments = buildSegmentsFromKnownHues(sampler, knownHues);
+    emit(lastSegments);
+    return lastSegments;
+  };
+
+  refreshSegments();
+
+  while (queue.length > 0) {
+    const { startHue, endHue } = queue.shift()!;
+    const span = endHue - startHue;
+
+    if (span <= MIN_SPAN) {
+      continue;
+    }
+
+    const [startColor, endColor] = await Promise.all([
+      sampler.get(startHue),
+      sampler.get(endHue),
+    ]);
+
+    const midpoint = Math.ceil(startHue + span / 2);
+    const middleColor = await sampler.get(midpoint % 360);
+
+    refreshSegments();
+
+    const namesMatch =
+      startColor.name === middleColor.name &&
+      middleColor.name === endColor.name;
+
+    if (namesMatch) {
+      continue;
+    }
+
+    queue.push({ startHue, endHue: midpoint });
+    queue.push({ startHue: midpoint, endHue });
   }
 
-  await subdivideRange({ sampler, startHue, endHue: midpoint });
-  await subdivideRange({ sampler, startHue: midpoint, endHue });
+  return refreshSegments();
 }
 
 // Combine adjacent segments that map to the same color name, handling wrap-around.
@@ -139,19 +169,97 @@ const mergeSegments = (segments: HueSegment[]): HueSegment[] => {
   return merged;
 };
 
-export async function segmentHueSpace({
+export function streamSegmentHueSpace({
   saturation,
   lightness,
-  sample, // primarily for the purpose of testing (skipping the dependency on the color api)
-}: SegmentHueSpaceOptions): Promise<HueSegment[]> {
+  sample,
+}: SegmentHueSpaceOptions): ReadableStream<Uint8Array> {
   const sampler = new AdaptiveSampler(
     sample ?? ((hue) => getColorByHsl({ hue, saturation, lightness })),
   );
 
-  const buildSegments = () => createSegments(sampler, saturation, lightness);
+  const encoder = new TextEncoder();
 
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      (async () => {
+        try {
+          await createSegments(sampler, saturation, lightness, (segments) => {
+            const payload = JSON.stringify({ segments });
+            controller.enqueue(encoder.encode(`${payload}\n`));
+          });
+          controller.close();
+        } catch (error) {
+          controller.error(error);
+        }
+      })();
+    },
+  });
+}
+
+async function consumeStream(
+  stream: ReadableStream<Uint8Array>,
+): Promise<HueSegment[]> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let latest: HueSegment[] = [];
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+
+    let newlineIndex = buffer.indexOf("\n");
+    while (newlineIndex !== -1) {
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+
+      if (line) {
+        const payload = JSON.parse(line) as { segments: HueSegment[] };
+        latest = payload.segments;
+      }
+
+      newlineIndex = buffer.indexOf("\n");
+    }
+  }
+
+  buffer += decoder.decode();
+
+  let newlineIndex = buffer.indexOf("\n");
+  while (newlineIndex !== -1) {
+    const line = buffer.slice(0, newlineIndex).trim();
+    buffer = buffer.slice(newlineIndex + 1);
+
+    if (line) {
+      const payload = JSON.parse(line) as { segments: HueSegment[] };
+      latest = payload.segments;
+    }
+
+    newlineIndex = buffer.indexOf("\n");
+  }
+
+  const remaining = buffer.trim();
+  if (remaining) {
+    const payload = JSON.parse(remaining) as { segments: HueSegment[] };
+    latest = payload.segments;
+  }
+
+  return latest;
+}
+
+export async function collectStreamedSegments({
+  saturation,
+  lightness,
+  sample,
+}: SegmentHueSpaceOptions): Promise<HueSegment[]> {
   if (sample) {
-    return buildSegments();
+    return consumeStream(
+      streamSegmentHueSpace({ saturation, lightness, sample }),
+    );
   }
 
   const key = `${saturation}:${lightness}`;
@@ -160,7 +268,9 @@ export async function segmentHueSpace({
     return cached;
   }
 
-  const promise = buildSegments();
+  const promise = consumeStream(
+    streamSegmentHueSpace({ saturation, lightness }),
+  );
   memo.set(key, promise);
 
   try {

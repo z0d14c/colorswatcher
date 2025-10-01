@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ColorDescriptor } from "../types.server";
-import { segmentHueSpace } from "../segmentHueSpace.server";
+import { collectStreamedSegments, streamSegmentHueSpace } from "../segmentHueSpace.server";
 import { normalizeHue } from "../utils.server";
 
 interface FakeRange {
@@ -44,7 +44,7 @@ const createFakeSampler = (ranges: FakeRange[]) => {
 
 describe("segmentHueSpace", () => {
   it("splits segments on hue boundaries", async () => {
-    const segments = await segmentHueSpace({
+    const segments = await collectStreamedSegments({
       saturation: 60,
       lightness: 50,
       sample: createFakeSampler([
@@ -66,7 +66,7 @@ describe("segmentHueSpace", () => {
   });
 
   it("merges wrap-around segments with the same name", async () => {
-    const segments = await segmentHueSpace({
+    const segments = await collectStreamedSegments({
       saturation: 60,
       lightness: 50,
       sample: createFakeSampler([
@@ -91,7 +91,7 @@ describe("segmentHueSpace", () => {
 
   it("returns a single segment for grayscale values", async () => {
     let calls = 0;
-    const segments = await segmentHueSpace({
+    const segments = await collectStreamedSegments({
       saturation: 0,
       lightness: 50,
       sample: async (hue) => {
@@ -120,5 +120,50 @@ describe("segmentHueSpace", () => {
     expect(segments[0].startHue).toBe(0);
     expect(segments[0].endHue).toBe(360);
     expect(calls).toBe(1);
+  });
+
+  it("streams progressive batches of segments", async () => {
+    const stream = streamSegmentHueSpace({
+      saturation: 60,
+      lightness: 50,
+      sample: createFakeSampler([
+        { start: 0, end: 90, name: "Red" },
+        { start: 90, end: 210, name: "Green" },
+        { start: 210, end: 360, name: "Blue" },
+      ]),
+    });
+
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+    }
+
+    buffer += decoder.decode();
+
+    const lines = buffer
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    expect(lines.length).toBeGreaterThan(1);
+
+    const finalPayload = JSON.parse(lines.at(-1) ?? "{}") as {
+      segments: { color: { name: string } }[];
+    };
+
+    expect(finalPayload.segments).toHaveLength(3);
+    expect(finalPayload.segments.map((segment) => segment.color.name)).toEqual([
+      "Red",
+      "Green",
+      "Blue",
+    ]);
   });
 });

@@ -21,7 +21,14 @@ describe("SwatchesSection", () => {
   it("renders the provided swatches", () => {
     const swatches = [createSwatch("Red"), createSwatch("Blue"), createSwatch("Green")];
 
-    render(<SwatchesSection swatches={swatches} error={null} isUpdating={false} />);
+    render(
+      <SwatchesSection
+        swatches={swatches}
+        error={null}
+        isUpdating={false}
+        showOverlay={false}
+      />,
+    );
 
     expect(screen.getAllByRole("article")).toHaveLength(swatches.length);
   });

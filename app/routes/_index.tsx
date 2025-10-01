@@ -3,14 +3,13 @@ import { useLoaderData, useNavigation } from "react-router";
 
 import type { Route } from "./+types/_index";
 
-import { segmentHueSpace } from "~/lib/segmentHueSpace.server";
+import { collectStreamedSegments } from "~/lib/segmentHueSpace.server";
 import type { HueSegment } from "~/lib/types.server";
 import { normalizeHue, readPercentageParam } from "~/lib/color-utils";
+import { DEFAULT_LIGHTNESS, DEFAULT_SATURATION } from "~/lib/defaults";
 import { SwatchControls } from "~/components/SwatchControls";
 import { SwatchesSection } from "~/components/SwatchesSection";
-
-const DEFAULT_SATURATION = 60;
-const DEFAULT_LIGHTNESS = 50;
+import { useStreamedSegments } from "~/hooks/useStreamedSegments";
 
 export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
@@ -18,7 +17,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const lightness = readPercentageParam(url, "l", DEFAULT_LIGHTNESS);
 
   try {
-    const segments = await segmentHueSpace({ saturation, lightness });
+    const segments = await collectStreamedSegments({ saturation, lightness });
     return { segments, saturation, lightness, error: null as string | null };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to load colors.";
@@ -34,6 +33,10 @@ export default function Index() {
   const [lValue, setLValue] = useState(lightness);
   const navigation = useNavigation();
   const isUpdatingSwatches = navigation.state !== "idle";
+  const {
+    segments: streamedSegments,
+    hasStreamedPartial,
+  } = useStreamedSegments({ navigation, initialSegments: segments });
   const hasPendingChanges = sValue !== saturation || lValue !== lightness;
 
   useEffect(() => {
@@ -47,7 +50,7 @@ export default function Index() {
   const swatches = useMemo(() => {
     const seen = new Map<string, HueSegment>();
 
-    for (const segment of segments) {
+    for (const segment of streamedSegments) {
       if (!seen.has(segment.color.name)) {
         seen.set(segment.color.name, segment);
       }
@@ -58,7 +61,9 @@ export default function Index() {
       const rightHue = normalizeHue(right.startHue);
       return leftHue - rightHue;
     });
-  }, [segments]);
+  }, [streamedSegments]);
+
+  const shouldBlockSwatches = isUpdatingSwatches && !hasStreamedPartial;
 
   return (
     <main className="mx-auto w-full max-w-screen-2xl px-4 py-12 sm:px-6 lg:px-10">
@@ -91,6 +96,7 @@ export default function Index() {
         swatches={swatches}
         error={error}
         isUpdating={isUpdatingSwatches}
+        showOverlay={shouldBlockSwatches}
       />
     </main>
   );
