@@ -4,12 +4,12 @@ import { useLoaderData, useNavigation } from "react-router";
 import type { Route } from "./+types/_index";
 
 import { collectStreamedSegments } from "~/api/segmentHueSpace.server";
-import type { HueSegment } from "~/shared/types";
-import { normalizeHue, readPercentageParam } from "~/shared/color-utils";
+import { readPercentageParam } from "~/shared/color-utils";
 import { DEFAULT_LIGHTNESS, DEFAULT_SATURATION } from "~/shared/defaults";
 import { SwatchControls } from "~/components/SwatchControls";
 import { SwatchesSection } from "~/components/SwatchesSection";
 import { useStreamedSegments } from "~/hooks/useStreamedSegments";
+import { sortSwatchesByHue } from "~/utils/sortSwatches";
 
 export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
@@ -26,26 +26,6 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 type LoaderData = Awaited<ReturnType<typeof loader>>;
-
-export const swatchSortKey = (segment: HueSegment): number => {
-  if (segment.endHue > 360) {
-    return 0;
-  }
-
-  return normalizeHue(segment.startHue);
-};
-
-export const sortSwatchesByHue = (segments: Iterable<HueSegment>): HueSegment[] =>
-  Array.from(segments).sort((left, right) => {
-    const leftHue = swatchSortKey(left);
-    const rightHue = swatchSortKey(right);
-
-    if (leftHue === rightHue) {
-      return normalizeHue(left.endHue) - normalizeHue(right.endHue);
-    }
-
-    return leftHue - rightHue;
-  });
 
 export default function Index() {
   const { segments, saturation, lightness, error } = useLoaderData<LoaderData>();
@@ -67,17 +47,7 @@ export default function Index() {
     setLValue(lightness);
   }, [lightness]);
 
-  const swatches = useMemo(() => {
-    const seen = new Map<string, HueSegment>();
-
-    for (const segment of streamedSegments) {
-      if (!seen.has(segment.color.name)) {
-        seen.set(segment.color.name, segment);
-      }
-    }
-
-    return sortSwatchesByHue(seen.values());
-  }, [streamedSegments]);
+  const swatches = useMemo(() => sortSwatchesByHue(streamedSegments), [streamedSegments]);
 
   const shouldBlockSwatches = isUpdatingSwatches && !hasStreamedPartial;
 

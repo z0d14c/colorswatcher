@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { HueSegment } from "~/shared/types";
-
-import { sortSwatchesByHue, swatchSortKey } from "../_index";
+import { swatchSortKey, sortSwatchesByHue } from "~/utils/sortSwatches";
 
 const createSegment = (
   name: string,
