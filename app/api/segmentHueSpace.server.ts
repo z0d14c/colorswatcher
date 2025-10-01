@@ -26,6 +26,14 @@ const segmentSpan = ({ startHue, endHue }: HueSegment): number => {
   return endHue + 360 - startHue;
 };
 
+// NOTE: In theory adaptive sampling should already produce unique color names
+// for any given hue, but the upstream dataset occasionally contains
+// near-duplicates (for example, "Screamin' Green" vs "Screamin Green") that
+// lead to overlapping segments being emitted. To guard against these data
+// quirks we canonicalize names, keep only the widest representative span for
+// each canonical key, and then emit at most one segment per key while
+// preserving the original discovery order so incremental updates remain
+// stable.
 const dedupeSegments = (segments: HueSegment[]): HueSegment[] => {
   if (segments.length <= 1) {
     return segments;
