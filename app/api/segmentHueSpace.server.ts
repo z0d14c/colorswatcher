@@ -12,6 +12,55 @@ const MIN_SPAN = 1;
 // memo persists and identical S/L pairs reuse the in-flight promise.
 const memo = new Map<string, Promise<HueSegment[]>>();
 
+const canonicalizeName = (name: string): string =>
+  name
+    .toLowerCase()
+    .replace(/[^a-z0-9]/gi, "")
+    .trim();
+
+const segmentSpan = ({ startHue, endHue }: HueSegment): number => {
+  if (endHue >= startHue) {
+    return endHue - startHue;
+  }
+
+  return endHue + 360 - startHue;
+};
+
+const dedupeSegments = (segments: HueSegment[]): HueSegment[] => {
+  if (segments.length <= 1) {
+    return segments;
+  }
+
+  const chosen = new Map<string, HueSegment>();
+
+  for (const segment of segments) {
+    const key = canonicalizeName(segment.color.name);
+    const existing = chosen.get(key);
+
+    if (!existing || segmentSpan(segment) > segmentSpan(existing)) {
+      chosen.set(key, segment);
+    }
+  }
+
+  const emitted = new Set<string>();
+  const unique: HueSegment[] = [];
+
+  for (const segment of segments) {
+    const key = canonicalizeName(segment.color.name);
+    if (emitted.has(key)) {
+      continue;
+    }
+
+    const selected = chosen.get(key);
+    if (selected && selected === segment) {
+      unique.push(segment);
+      emitted.add(key);
+    }
+  }
+
+  return unique;
+};
+
 const buildSegmentsFromKnownHues = (
   sampler: AdaptiveSampler,
   knownHues: readonly number[],
@@ -38,7 +87,7 @@ const buildSegmentsFromKnownHues = (
     segments.push({ startHue, endHue, color });
   }
 
-  return mergeSegments(segments);
+  return dedupeSegments(mergeSegments(segments));
 };
 
 // Kick off adaptive sampling and turn the sampled hues into merged segments,

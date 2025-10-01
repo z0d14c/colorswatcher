@@ -89,6 +89,24 @@ describe("segmentHueSpace", () => {
     expect(roseSegment?.endHue).toBeLessThan(406);
   });
 
+  it("omits duplicate color names even with punctuation differences", async () => {
+    const segments = await collectStreamedSegments({
+      saturation: 60,
+      lightness: 50,
+      sample: createFakeSampler([
+        { start: 0, end: 90, name: "Screamin Green" },
+        { start: 90, end: 210, name: "Screamin' Green" },
+        { start: 210, end: 270, name: "Screamin Green" },
+        { start: 270, end: 360, name: "Blue" },
+      ]),
+    });
+
+    expect(segments.map((segment) => segment.color.name)).toEqual([
+      "Screamin' Green",
+      "Blue",
+    ]);
+  });
+
   it("returns a single segment for grayscale values", async () => {
     let calls = 0;
     const segments = await collectStreamedSegments({
