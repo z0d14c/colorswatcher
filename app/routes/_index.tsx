@@ -1,9 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useLoaderData, useNavigation } from "react-router";
-
-import type { Route } from "./+types/_index";
-
-import { collectStreamedSegments } from "~/api/segmentHueSpace.server";
+import { useLocation, useNavigation } from "react-router";
 import { readPercentageParam } from "~/shared/color-utils";
 import { DEFAULT_LIGHTNESS, DEFAULT_SATURATION } from "~/shared/defaults";
 import { SwatchControls } from "~/components/SwatchControls";
@@ -11,32 +7,31 @@ import { SwatchesSection } from "~/components/SwatchesSection";
 import { useStreamedSegments } from "~/hooks/useStreamedSegments";
 import { sortSwatchesByHue } from "~/utils/sortSwatches";
 
-export async function loader({ request }: Route.LoaderArgs) {
-  const url = new URL(request.url);
-  const saturation = readPercentageParam(url, "s", DEFAULT_SATURATION);
-  const lightness = readPercentageParam(url, "l", DEFAULT_LIGHTNESS);
-
-  try {
-    const segments = await collectStreamedSegments({ saturation, lightness });
-    return { segments, saturation, lightness, error: null as string | null };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to load colors.";
-    return { segments: [], saturation, lightness, error: message };
-  }
-}
-
-type LoaderData = Awaited<ReturnType<typeof loader>>;
-
 export default function Index() {
-  const { segments, saturation, lightness, error } = useLoaderData<LoaderData>();
+  const location = useLocation();
+  const navigation = useNavigation();
+
+  const { saturation, lightness } = useMemo(() => {
+    const url = new URL(
+      `${location.pathname}${location.search}`,
+      "https://colorswatcher.local",
+    );
+
+    return {
+      saturation: readPercentageParam(url, "s", DEFAULT_SATURATION),
+      lightness: readPercentageParam(url, "l", DEFAULT_LIGHTNESS),
+    };
+  }, [location.pathname, location.search]);
   const [sValue, setSValue] = useState(saturation);
   const [lValue, setLValue] = useState(lightness);
-  const navigation = useNavigation();
-  const isUpdatingSwatches = navigation.state !== "idle";
   const {
     segments: streamedSegments,
     hasStreamedPartial,
-  } = useStreamedSegments({ navigation, initialSegments: segments });
+    isStreaming,
+    error,
+  } = useStreamedSegments({ navigation, search: location.search });
+  const isPendingNavigation = navigation.state !== "idle";
+  const isUpdatingSwatches = isPendingNavigation || isStreaming;
   const hasPendingChanges = sValue !== saturation || lValue !== lightness;
 
   useEffect(() => {
@@ -49,7 +44,7 @@ export default function Index() {
 
   const swatches = useMemo(() => sortSwatchesByHue(streamedSegments), [streamedSegments]);
 
-  const shouldBlockSwatches = isUpdatingSwatches && !hasStreamedPartial;
+  const shouldBlockSwatches = isStreaming && !hasStreamedPartial;
 
   return (
     <main className="mx-auto w-full max-w-screen-2xl px-4 py-12 sm:px-6 lg:px-10">

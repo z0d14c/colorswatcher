@@ -182,10 +182,21 @@ export function streamSegmentHueSpace({
 
   return new ReadableStream<Uint8Array>({
     start(controller) {
+      let lastPayload: string | null = null;
+
       (async () => {
         try {
           await createSegments(sampler, saturation, lightness, (segments) => {
+            if (segments.length === 0) {
+              return;
+            }
+
             const payload = JSON.stringify({ segments });
+            if (payload === lastPayload) {
+              return;
+            }
+
+            lastPayload = payload;
             controller.enqueue(encoder.encode(`${payload}\n`));
           });
           controller.close();

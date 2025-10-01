@@ -1,43 +1,32 @@
 import { act, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Location, Navigation } from "react-router";
+import { useEffect } from "react";
 
 import type { HueSegment } from "~/shared/types";
 import { useStreamedSegments } from "../useStreamedSegments";
-import { useEffect } from "react";
+
+type StreamResult = ReturnType<typeof useStreamedSegments>;
+
+type UpdateHandler = (value: StreamResult) => void;
 
 interface TestComponentProps {
   readonly navigation: Navigation;
-  readonly initialSegments: HueSegment[];
-  readonly onUpdate: (value: {
-    segments: HueSegment[];
-    hasStreamedPartial: boolean;
-  }) => void;
+  readonly search: string;
+  readonly onUpdate: UpdateHandler;
 }
 
-function TestComponent({ navigation, initialSegments, onUpdate }: TestComponentProps) {
-  const result = useStreamedSegments({ navigation, initialSegments });
+function TestComponent({ navigation, search, onUpdate }: TestComponentProps) {
+  const result = useStreamedSegments({ navigation, search });
 
   useEffect(() => {
     onUpdate(result);
-  }, [result.segments, result.hasStreamedPartial, onUpdate]);
+  }, [result, onUpdate]);
 
   return null;
 }
 
 const encoder = new TextEncoder();
-
-const initialSegments: HueSegment[] = [
-  {
-    startHue: 0,
-    endHue: 120,
-    color: {
-      name: "Red",
-      rgb: { value: "rgb(255, 0, 0)", r: 255, g: 0, b: 0 },
-      hsl: { value: "hsl(0, 50%, 50%)", h: 0, s: 50, l: 50 },
-    },
-  },
-];
 
 function createIdleNavigation(): Navigation {
   return {
@@ -101,16 +90,25 @@ afterEach(() => {
 });
 
 describe("useStreamedSegments", () => {
-  it("resets to the latest loader segments", async () => {
-    const updates: Array<{
-      segments: HueSegment[];
-      hasStreamedPartial: boolean;
-    }> = [];
+  it("streams segments for the current search", async () => {
+    const { stream, enqueue, close } = createStream();
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(stream, {
+          status: 200,
+          headers: { "Content-Type": "text/x-ndjson" },
+        }),
+      ),
+    );
 
-    const { rerender } = render(
+    vi.stubGlobal("fetch", fetchMock);
+
+    const updates: StreamResult[] = [];
+
+    render(
       <TestComponent
         navigation={createIdleNavigation()}
-        initialSegments={initialSegments}
+        search="?s=50&l=50"
         onUpdate={(value) => {
           updates.push(value);
         }}
@@ -118,8 +116,144 @@ describe("useStreamedSegments", () => {
     );
 
     await waitFor(() => {
-      expect(updates.at(-1)?.segments).toEqual(initialSegments);
-      expect(updates.at(-1)?.hasStreamedPartial).toBe(false);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://localhost:3000/swatches.stream?s=50&l=50",
+        expect.objectContaining({
+          headers: { Accept: "text/x-ndjson" },
+          signal: expect.any(AbortSignal),
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(updates.at(-1)).toMatchObject({
+        segments: [],
+        hasStreamedPartial: false,
+        isStreaming: true,
+        error: null,
+      });
+    });
+
+    const streamedSegments: HueSegment[] = [
+      {
+        startHue: 0,
+        endHue: 120,
+        color: {
+          name: "Red",
+          rgb: { value: "rgb(255, 0, 0)", r: 255, g: 0, b: 0 },
+          hsl: { value: "hsl(0, 50%, 50%)", h: 0, s: 50, l: 50 },
+        },
+      },
+    ];
+
+    await act(async () => {
+      enqueue(`${JSON.stringify({ segments: streamedSegments })}\n`);
+      close();
+    });
+
+    await waitFor(() => {
+      expect(updates.at(-1)).toEqual({
+        segments: streamedSegments,
+        hasStreamedPartial: true,
+        isStreaming: false,
+        error: null,
+      });
+    });
+  });
+
+  it("clears previous segments when a new navigation begins", async () => {
+    const first = createStream();
+    const second = createStream();
+
+    const fetchMock = vi
+      .fn(() =>
+        Promise.resolve(
+          new Response(new ReadableStream<Uint8Array>(), {
+            status: 200,
+            headers: { "Content-Type": "text/x-ndjson" },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(first.stream, {
+          status: 200,
+          headers: { "Content-Type": "text/x-ndjson" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(second.stream, {
+          status: 200,
+          headers: { "Content-Type": "text/x-ndjson" },
+        }),
+      );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const updates: StreamResult[] = [];
+
+    const { rerender } = render(
+      <TestComponent
+        navigation={createIdleNavigation()}
+        search="?s=40&l=40"
+        onUpdate={(value) => {
+          updates.push(value);
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    const initialSegments: HueSegment[] = [
+      {
+        startHue: 0,
+        endHue: 90,
+        color: {
+          name: "Coral",
+          rgb: { value: "rgb(240, 128, 128)", r: 240, g: 128, b: 128 },
+          hsl: { value: "hsl(0, 60%, 72%)", h: 0, s: 60, l: 72 },
+        },
+      },
+    ];
+
+    await act(async () => {
+      first.enqueue(`${JSON.stringify({ segments: initialSegments })}\n`);
+      first.close();
+    });
+
+    await waitFor(() => {
+      expect(updates.at(-1)).toEqual({
+        segments: initialSegments,
+        hasStreamedPartial: true,
+        isStreaming: false,
+        error: null,
+      });
+    });
+
+    const loadingNavigation = createLoadingNavigation("?s=70&l=20");
+
+    rerender(
+      <TestComponent
+        navigation={loadingNavigation}
+        search="?s=40&l=40"
+        onUpdate={(value) => {
+          updates.push(value);
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    await waitFor(() => {
+      expect(updates.at(-1)).toMatchObject({
+        segments: [],
+        hasStreamedPartial: false,
+        isStreaming: true,
+        error: null,
+      });
     });
 
     const nextSegments: HueSegment[] = [
@@ -134,99 +268,35 @@ describe("useStreamedSegments", () => {
       },
     ];
 
-    rerender(
-      <TestComponent
-        navigation={createIdleNavigation()}
-        initialSegments={nextSegments}
-        onUpdate={(value) => {
-          updates.push(value);
-        }}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(updates.at(-1)?.segments).toEqual(nextSegments);
-      expect(updates.at(-1)?.hasStreamedPartial).toBe(false);
-    });
-  });
-
-  it("streams NDJSON payloads during navigation", async () => {
-    const { stream, enqueue, close } = createStream();
-
-    const fetchMock = vi.fn(() =>
-      Promise.resolve(
-        new Response(stream, {
-          status: 200,
-          headers: { "Content-Type": "text/x-ndjson" },
-        }),
-      ),
-    );
-
-    vi.stubGlobal("fetch", fetchMock);
-
-    const updates: Array<{
-      segments: HueSegment[];
-      hasStreamedPartial: boolean;
-    }> = [];
-
-    const { rerender } = render(
-      <TestComponent
-        navigation={createIdleNavigation()}
-        initialSegments={initialSegments}
-        onUpdate={(value) => {
-          updates.push(value);
-        }}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(updates).not.toHaveLength(0);
-    });
-
-    const loadingNavigation = createLoadingNavigation("?s=60&l=40");
-
-    rerender(
-      <TestComponent
-        navigation={loadingNavigation}
-        initialSegments={initialSegments}
-        onUpdate={(value) => {
-          updates.push(value);
-        }}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/swatches.stream?s=60&l=40",
-        expect.objectContaining({
-          headers: { Accept: "text/x-ndjson" },
-          signal: expect.any(AbortSignal),
-        }),
-      );
-    });
-
-    const streamedSegments: HueSegment[] = [
-      {
-        startHue: 0,
-        endHue: 90,
-        color: {
-          name: "Coral",
-          rgb: { value: "rgb(240, 128, 128)", r: 240, g: 128, b: 128 },
-          hsl: { value: "hsl(0, 60%, 72%)", h: 0, s: 60, l: 72 },
-        },
-      },
-    ];
-
     await act(async () => {
-      enqueue(`${JSON.stringify({ segments: streamedSegments })}\n`);
-      close();
+      second.enqueue(`${JSON.stringify({ segments: nextSegments })}\n`);
+      second.close();
     });
 
     await waitFor(() => {
       expect(updates.at(-1)).toEqual({
-        segments: streamedSegments,
+        segments: nextSegments,
         hasStreamedPartial: true,
+        isStreaming: false,
+        error: null,
       });
+    });
+
+    rerender(
+      <TestComponent
+        navigation={createIdleNavigation()}
+        search="?s=70&l=20"
+        onUpdate={(value) => {
+          updates.push(value);
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        "http://localhost:3000/swatches.stream?s=70&l=20",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
     });
   });
 });
