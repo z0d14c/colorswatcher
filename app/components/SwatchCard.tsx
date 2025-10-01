@@ -12,7 +12,7 @@ export function SwatchCard({ segment }: SwatchCardProps) {
   const textClass = luminanceTextClass(rgb);
 
   return (
-    <article className="overflow-hidden rounded-xl border border-white/10 shadow-lg">
+    <article className="animate-swatch-entry overflow-hidden rounded-xl border border-white/10 shadow-lg">
       <div
         className={`p-6 transition-colors duration-300 ${textClass}`}
         style={{ backgroundColor: rgb.value }}
