@@ -1,5 +1,5 @@
-import type { HueSegment } from "~/lib/types.server";
-import { luminanceTextClass } from "~/lib/color-utils";
+import type { HueSegment } from "~/shared/types";
+import { luminanceTextClass } from "~/shared/color-utils";
 
 interface SwatchCardProps {
   readonly segment: HueSegment;

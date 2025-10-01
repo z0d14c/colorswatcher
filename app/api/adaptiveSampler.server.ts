@@ -1,5 +1,5 @@
-import type { ColorDescriptor } from "./types.server";
-import { normalizeHue } from "./utils.server";
+import type { ColorDescriptor } from "~/shared/types";
+import { normalizeHue } from "~/shared/color-utils";
 
 export class AdaptiveSampler {
   private readonly fetcher: (hue: number) => Promise<ColorDescriptor>;

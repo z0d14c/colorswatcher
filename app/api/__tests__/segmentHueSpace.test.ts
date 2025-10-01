@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type { ColorDescriptor } from "../types.server";
+import type { ColorDescriptor } from "~/shared/types";
 import { collectStreamedSegments, streamSegmentHueSpace } from "../segmentHueSpace.server";
-import { normalizeHue } from "../utils.server";
+import { normalizeHue } from "~/shared/color-utils";
 
 interface FakeRange {
   readonly start: number;

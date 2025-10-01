@@ -1,6 +1,6 @@
 import { AdaptiveSampler } from "./adaptiveSampler.server";
 import { getColorByHsl } from "./colorApi.server";
-import type { HueSegment, SegmentHueSpaceOptions } from "./types.server";
+import type { HueSegment, SegmentHueSpaceOptions } from "~/shared/types";
 
 // Minimum width we will subdivide; narrower bands would be visually indistinguishable.
 const MIN_SPAN = 1;

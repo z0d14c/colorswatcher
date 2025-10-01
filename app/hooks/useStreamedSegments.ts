@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Navigation } from "react-router";
 
-import type { HueSegment } from "~/lib/types.server";
+import type { HueSegment } from "~/shared/types";
 
 interface UseStreamedSegmentsArgs {
   readonly navigation: Navigation;

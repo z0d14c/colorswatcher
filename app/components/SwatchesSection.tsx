@@ -1,4 +1,4 @@
-import type { HueSegment } from "~/lib/types.server";
+import type { HueSegment } from "~/shared/types";
 
 import { SwatchCard } from "./SwatchCard";
 

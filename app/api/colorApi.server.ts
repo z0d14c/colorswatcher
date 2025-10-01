@@ -1,5 +1,5 @@
-import type { ColorDescriptor, GetColorByHslOptions } from "./types.server";
-import { normalizeHue } from "./utils.server";
+import type { ColorDescriptor, GetColorByHslOptions } from "~/shared/types";
+import { normalizeHue } from "~/shared/color-utils";
 
 // Base endpoint documented by The Color API for looking up an HSL tuple.
 const COLOR_API_ENDPOINT = "https://www.thecolorapi.com/id";

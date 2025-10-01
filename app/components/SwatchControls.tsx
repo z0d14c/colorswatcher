@@ -1,7 +1,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import { Form } from "react-router";
 
-import { clampPercentage } from "~/lib/color-utils";
+import { clampPercentage } from "~/shared/color-utils";
 
 interface SwatchControlsProps {
   readonly saturation: number;
