@@ -12,14 +12,17 @@ const projectRoot = path.resolve(__dirname, "..");
 const dataDir = path.join(projectRoot, "data");
 const databasePath = path.join(dataDir, "colors.sqlite");
 
-const concurrency = Number.parseInt(process.env.COLOR_CACHE_CONCURRENCY ?? "4", 10);
-const hueStart = Number.parseInt(process.env.COLOR_CACHE_HUE_START ?? "0", 10);
-const hueEnd = Number.parseInt(process.env.COLOR_CACHE_HUE_END ?? "359", 10);
-const saturationStart = Number.parseInt(process.env.COLOR_CACHE_SATURATION_START ?? "0", 10);
-const saturationEnd = Number.parseInt(process.env.COLOR_CACHE_SATURATION_END ?? "100", 10);
-const lightnessStart = Number.parseInt(process.env.COLOR_CACHE_LIGHTNESS_START ?? "0", 10);
-const lightnessEnd = Number.parseInt(process.env.COLOR_CACHE_LIGHTNESS_END ?? "100", 10);
-const retryLimit = Number.parseInt(process.env.COLOR_CACHE_RETRY_LIMIT ?? "4", 10);
+const parseInteger = (value, fallback) => {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const concurrency = Math.max(1, parseInteger(process.env.COLOR_CACHE_CONCURRENCY, 4));
+const saturationStart = parseInteger(process.env.COLOR_CACHE_SATURATION_START, 0);
+const saturationEnd = parseInteger(process.env.COLOR_CACHE_SATURATION_END, 100);
+const lightnessStart = parseInteger(process.env.COLOR_CACHE_LIGHTNESS_START, 0);
+const lightnessEnd = parseInteger(process.env.COLOR_CACHE_LIGHTNESS_END, 100);
+const retryLimit = parseInteger(process.env.COLOR_CACHE_RETRY_LIMIT, 4);
 
 const normalizePercentage = (value) => {
   if (!Number.isFinite(value)) return 0;
@@ -119,6 +122,101 @@ const fetchColor = async (h, s, l, attempt = 0) => {
   };
 };
 
+const rowToColorDescriptor = (row) => ({
+  name: row.name,
+  rgb: {
+    value: row.rgb_value,
+    r: row.rgb_r,
+    g: row.rgb_g,
+    b: row.rgb_b,
+  },
+  hsl: {
+    value: row.hsl_value,
+    h: row.hsl_h,
+    s: row.hsl_s,
+    l: row.hsl_l,
+  },
+});
+
+const MIN_SPAN = 1;
+
+class AdaptiveSampler {
+  constructor(fetcher) {
+    this.fetcher = fetcher;
+    this.promises = new Map();
+    this.values = new Map();
+  }
+
+  keyFor(hue) {
+    const normalized = normalizeHue(hue);
+    return Number(normalized.toFixed(6));
+  }
+
+  async get(hue) {
+    const key = this.keyFor(hue);
+    if (this.promises.has(key)) {
+      return this.promises.get(key);
+    }
+
+    const promise = this.fetcher(normalizeHue(hue)).then((value) => {
+      this.values.set(key, value);
+      return value;
+    });
+
+    this.promises.set(key, promise);
+
+    try {
+      return await promise;
+    } catch (error) {
+      this.promises.delete(key);
+      throw error;
+    }
+  }
+
+  getCached(hue) {
+    return this.values.get(this.keyFor(hue));
+  }
+
+  getKnownHues() {
+    return Array.from(this.values.keys()).sort((a, b) => a - b);
+  }
+}
+
+async function subdivideRange({ sampler, startHue, endHue }) {
+  const span = endHue - startHue;
+  if (span <= MIN_SPAN) {
+    return;
+  }
+
+  const startColor = await sampler.get(startHue);
+  const endColor = await sampler.get(endHue);
+
+  const midpoint = Math.ceil(startHue + span / 2);
+  const middleColor = await sampler.get(midpoint % 360);
+
+  const namesMatch =
+    startColor.name === middleColor.name && middleColor.name === endColor.name;
+
+  if (namesMatch) {
+    return;
+  }
+
+  await subdivideRange({ sampler, startHue, endHue: midpoint });
+  await subdivideRange({ sampler, startHue: midpoint, endHue });
+}
+
+async function sampleHueSpace(sampler, saturation, lightness) {
+  if (saturation === 0 || lightness === 0 || lightness === 100) {
+    await sampler.get(0);
+    return;
+  }
+
+  await sampler.get(0);
+  await subdivideRange({ sampler, startHue: 0, endHue: 360 });
+}
+
+const formatPair = (saturation, lightness) => `S=${saturation} L=${lightness}`;
+
 const main = async () => {
   const db = await ensureDatabase();
 
@@ -140,83 +238,120 @@ const main = async () => {
   `);
 
   const select = db.prepare(
-    `SELECT 1 FROM colors WHERE hue = ? AND saturation = ? AND lightness = ? LIMIT 1;`,
+    `SELECT name, rgb_value, rgb_r, rgb_g, rgb_b, hsl_value, hsl_h, hsl_s, hsl_l FROM colors WHERE hue = ? AND saturation = ? AND lightness = ? LIMIT 1;`,
   );
 
-  let totalRequests = 0;
-  let skipped = 0;
+  const saturationMin = normalizePercentage(
+    Math.min(saturationStart, saturationEnd),
+  );
+  const saturationMax = normalizePercentage(
+    Math.max(saturationStart, saturationEnd),
+  );
+  const lightnessMin = normalizePercentage(Math.min(lightnessStart, lightnessEnd));
+  const lightnessMax = normalizePercentage(Math.max(lightnessStart, lightnessEnd));
+
+  const totalPairs =
+    (saturationMax - saturationMin + 1) * (lightnessMax - lightnessMin + 1);
+  if (totalPairs <= 0) {
+    console.error("No saturation/lightness pairs to process.");
+    db.close();
+    return;
+  }
+
   let inserted = 0;
-  const tasks = [];
-  let active = 0;
+  let reused = 0;
+  let apiRequests = 0;
+  let processedPairs = 0;
 
-  const enqueue = async (h, s, l) => {
-    if (select.get(h, s, l)) {
-      skipped += 1;
-      return;
-    }
-
-    while (active >= concurrency) {
-      await Promise.race(tasks);
-      for (let index = tasks.length - 1; index >= 0; index -= 1) {
-        if (tasks[index].settled) {
-          tasks.splice(index, 1);
-        }
-      }
-    }
-
-    const task = (async () => {
-      try {
-        active += 1;
-        totalRequests += 1;
-        const color = await fetchColor(h, s, l);
-        insert.run(
-          h,
-          s,
-          l,
-          color.name,
-          color.rgb.value,
-          color.rgb.r,
-          color.rgb.g,
-          color.rgb.b,
-          color.hsl.value,
-          color.hsl.h,
-          color.hsl.s,
-          color.hsl.l,
-        );
-        inserted += 1;
-      } catch (error) {
-        console.error(`Failed to cache ${h}/${s}/${l}:`, error);
-        throw error;
-      } finally {
-        active -= 1;
-      }
-    })();
-
-    task.settled = false;
-    task.then(
-      () => {
-        task.settled = true;
-      },
-      () => {
-        task.settled = true;
-      },
-    );
-
-    tasks.push(task);
-  };
-
-  for (let saturation = saturationStart; saturation <= saturationEnd; saturation += 1) {
-    for (let lightness = lightnessStart; lightness <= lightnessEnd; lightness += 1) {
-      for (let hue = hueStart; hue <= hueEnd; hue += 1) {
-        await enqueue(hue, saturation, lightness);
-      }
+  const pairs = [];
+  for (let saturation = saturationMin; saturation <= saturationMax; saturation += 1) {
+    for (let lightness = lightnessMin; lightness <= lightnessMax; lightness += 1) {
+      pairs.push({ saturation, lightness });
     }
   }
 
-  await Promise.all(tasks);
+  console.log(
+    `Preparing to sample ${pairs.length} saturation/lightness combinations using up to ${concurrency} workers.`,
+  );
 
-  console.log(`Inserted ${inserted} colors. Skipped ${skipped} existing entries.`);
-  console.log(`Total requests sent: ${totalRequests}. Database saved at ${databasePath}`);
+  let nextIndex = 0;
+  const takeNextPair = () => {
+    if (nextIndex >= pairs.length) {
+      return null;
+    }
+    const pair = pairs[nextIndex];
+    nextIndex += 1;
+    return pair;
+  };
+
+  const processPair = async ({ saturation, lightness }) => {
+    const sampler = new AdaptiveSampler(async (hue) => {
+      const normalizedHue = Math.round(normalizeHue(hue));
+      const row = select.get(normalizedHue, saturation, lightness);
+      if (row) {
+        reused += 1;
+        return rowToColorDescriptor(row);
+      }
+
+      const color = await fetchColor(normalizedHue, saturation, lightness);
+      apiRequests += 1;
+
+      insert.run(
+        normalizedHue,
+        saturation,
+        lightness,
+        color.name,
+        color.rgb.value,
+        color.rgb.r,
+        color.rgb.g,
+        color.rgb.b,
+        color.hsl.value,
+        color.hsl.h,
+        color.hsl.s,
+        color.hsl.l,
+      );
+
+      inserted += 1;
+      return color;
+    });
+
+    try {
+      await sampleHueSpace(sampler, saturation, lightness);
+    } catch (error) {
+      console.error(
+        `Failed while sampling ${formatPair(saturation, lightness)}:`,
+        error,
+      );
+      throw error;
+    }
+
+    processedPairs += 1;
+
+    if (processedPairs % 25 === 0 || processedPairs === pairs.length) {
+      console.log(
+        `Processed ${processedPairs}/${pairs.length} combinations. Inserted ${inserted} new colors (reused ${reused}).`,
+      );
+    }
+  };
+
+  const workerCount = Math.min(concurrency, pairs.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const pair = takeNextPair();
+      if (!pair) {
+        break;
+      }
+
+      await processPair(pair);
+    }
+  });
+
+  await Promise.all(workers);
+
+  console.log(
+    `Inserted ${inserted} colors. Reused ${reused} existing samples. Sent ${apiRequests} requests to The Color API.`,
+  );
+  console.log(`Database saved at ${databasePath}`);
 
   db.close();
 };
