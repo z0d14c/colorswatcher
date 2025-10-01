@@ -13,6 +13,7 @@ interface SwatchControlsProps {
   readonly defaultSaturation: number;
   readonly defaultLightness: number;
   readonly isUpdating: boolean;
+  readonly isDirty: boolean;
 }
 
 export function SwatchControls({
@@ -25,6 +26,7 @@ export function SwatchControls({
   defaultSaturation,
   defaultLightness,
   isUpdating,
+  isDirty,
 }: SwatchControlsProps) {
   return (
     <Form method="get" className="grid gap-8 rounded-xl border border-white/10 bg-slate-900/40 p-6 shadow-xl backdrop-blur">
@@ -100,7 +102,7 @@ export function SwatchControls({
         </span>
         <button
           type="submit"
-          disabled={isUpdating}
+          disabled={!isDirty || isUpdating}
           className="flex items-center gap-2 rounded-md bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-900 shadow transition-colors hover:bg-white focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isUpdating && (

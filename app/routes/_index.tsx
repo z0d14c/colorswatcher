@@ -34,6 +34,7 @@ export default function Index() {
   const [lValue, setLValue] = useState(lightness);
   const navigation = useNavigation();
   const isUpdatingSwatches = navigation.state !== "idle";
+  const hasPendingChanges = sValue !== saturation || lValue !== lightness;
 
   useEffect(() => {
     setSValue(saturation);
@@ -83,6 +84,7 @@ export default function Index() {
         defaultSaturation={DEFAULT_SATURATION}
         defaultLightness={DEFAULT_LIGHTNESS}
         isUpdating={isUpdatingSwatches}
+        isDirty={hasPendingChanges}
       />
 
       <SwatchesSection
