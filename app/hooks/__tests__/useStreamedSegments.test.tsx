@@ -2,7 +2,7 @@ import { act, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Location, Navigation } from "react-router";
 
-import type { HueSegment } from "~/lib/types.server";
+import type { HueSegment } from "~/shared/types";
 import { useStreamedSegments } from "../useStreamedSegments";
 import { useEffect } from "react";
 

@@ -5,7 +5,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { SwatchesSection } from "../SwatchesSection";
-import type { HueSegment } from "~/lib/types.server";
+import type { HueSegment } from "~/shared/types";
 
 const createSwatch = (name: string): HueSegment => ({
   startHue: 0,

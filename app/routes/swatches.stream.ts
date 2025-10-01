@@ -1,8 +1,8 @@
 import type { Route } from "./+types/swatches.stream";
 
-import { streamSegmentHueSpace } from "~/lib/segmentHueSpace.server";
-import { readPercentageParam } from "~/lib/color-utils";
-import { DEFAULT_LIGHTNESS, DEFAULT_SATURATION } from "~/lib/defaults";
+import { streamSegmentHueSpace } from "~/api/segmentHueSpace.server";
+import { readPercentageParam } from "~/shared/color-utils";
+import { DEFAULT_LIGHTNESS, DEFAULT_SATURATION } from "~/shared/defaults";
 
 export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);

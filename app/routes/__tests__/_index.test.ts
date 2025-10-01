@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { HueSegment } from "~/lib/types.server";
+import type { HueSegment } from "~/shared/types";
 
 import { sortSwatchesByHue, swatchSortKey } from "../_index";
 

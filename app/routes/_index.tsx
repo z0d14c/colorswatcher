@@ -3,10 +3,10 @@ import { useLoaderData, useNavigation } from "react-router";
 
 import type { Route } from "./+types/_index";
 
-import { collectStreamedSegments } from "~/lib/segmentHueSpace.server";
-import type { HueSegment } from "~/lib/types.server";
-import { normalizeHue, readPercentageParam } from "~/lib/color-utils";
-import { DEFAULT_LIGHTNESS, DEFAULT_SATURATION } from "~/lib/defaults";
+import { collectStreamedSegments } from "~/api/segmentHueSpace.server";
+import type { HueSegment } from "~/shared/types";
+import { normalizeHue, readPercentageParam } from "~/shared/color-utils";
+import { DEFAULT_LIGHTNESS, DEFAULT_SATURATION } from "~/shared/defaults";
 import { SwatchControls } from "~/components/SwatchControls";
 import { SwatchesSection } from "~/components/SwatchesSection";
 import { useStreamedSegments } from "~/hooks/useStreamedSegments";
