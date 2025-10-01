@@ -29,7 +29,11 @@ export function SwatchControls({
   isDirty,
 }: SwatchControlsProps) {
   return (
-    <Form method="get" className="grid gap-8 rounded-xl border border-white/10 bg-slate-900/40 p-6 shadow-xl backdrop-blur">
+    <Form
+      method="get"
+      preventScrollReset
+      className="grid gap-8 rounded-xl border border-white/10 bg-slate-900/40 p-6 shadow-xl backdrop-blur"
+    >
       <div className="grid gap-6 sm:grid-cols-2">
         <fieldset className="space-y-4">
           <legend className="text-sm font-medium text-slate-200">Saturation</legend>
@@ -43,8 +47,9 @@ export function SwatchControls({
               max={100}
               step={1}
               value={saturationValue}
+              disabled={isUpdating}
               onChange={(event) => onSaturationChange(Number(event.currentTarget.value))}
-              className="accent-slate-200"
+              className="accent-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
             />
             <input
               aria-label="Saturation percentage"
@@ -54,11 +59,12 @@ export function SwatchControls({
               max={100}
               step={1}
               value={saturationValue}
+              disabled={isUpdating}
               onChange={(event) => {
                 const next = clampPercentage(Number(event.currentTarget.value), defaultSaturation);
                 onSaturationChange(next);
               }}
-              className="w-24 rounded-md border border-white/10 bg-slate-950/60 px-3 py-2 text-sm font-medium text-slate-100 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400/40"
+              className="w-24 rounded-md border border-white/10 bg-slate-950/60 px-3 py-2 text-sm font-medium text-slate-100 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400/40 disabled:cursor-not-allowed disabled:opacity-60"
             />
           </label>
         </fieldset>
@@ -75,8 +81,9 @@ export function SwatchControls({
               max={100}
               step={1}
               value={lightnessValue}
+              disabled={isUpdating}
               onChange={(event) => onLightnessChange(Number(event.currentTarget.value))}
-              className="accent-slate-200"
+              className="accent-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
             />
             <input
               aria-label="Lightness percentage"
@@ -86,11 +93,12 @@ export function SwatchControls({
               max={100}
               step={1}
               value={lightnessValue}
+              disabled={isUpdating}
               onChange={(event) => {
                 const next = clampPercentage(Number(event.currentTarget.value), defaultLightness);
                 onLightnessChange(next);
               }}
-              className="w-24 rounded-md border border-white/10 bg-slate-950/60 px-3 py-2 text-sm font-medium text-slate-100 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400/40"
+              className="w-24 rounded-md border border-white/10 bg-slate-950/60 px-3 py-2 text-sm font-medium text-slate-100 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-400/40 disabled:cursor-not-allowed disabled:opacity-60"
             />
           </label>
         </fieldset>

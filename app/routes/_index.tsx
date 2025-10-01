@@ -27,6 +27,26 @@ export async function loader({ request }: Route.LoaderArgs) {
 
 type LoaderData = Awaited<ReturnType<typeof loader>>;
 
+export const swatchSortKey = (segment: HueSegment): number => {
+  if (segment.endHue > 360) {
+    return 0;
+  }
+
+  return normalizeHue(segment.startHue);
+};
+
+export const sortSwatchesByHue = (segments: Iterable<HueSegment>): HueSegment[] =>
+  Array.from(segments).sort((left, right) => {
+    const leftHue = swatchSortKey(left);
+    const rightHue = swatchSortKey(right);
+
+    if (leftHue === rightHue) {
+      return normalizeHue(left.endHue) - normalizeHue(right.endHue);
+    }
+
+    return leftHue - rightHue;
+  });
+
 export default function Index() {
   const { segments, saturation, lightness, error } = useLoaderData<LoaderData>();
   const [sValue, setSValue] = useState(saturation);
@@ -56,11 +76,7 @@ export default function Index() {
       }
     }
 
-    return Array.from(seen.values()).sort((left, right) => {
-      const leftHue = normalizeHue(left.startHue);
-      const rightHue = normalizeHue(right.startHue);
-      return leftHue - rightHue;
-    });
+    return sortSwatchesByHue(seen.values());
   }, [streamedSegments]);
 
   const shouldBlockSwatches = isUpdatingSwatches && !hasStreamedPartial;
