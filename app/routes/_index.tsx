@@ -3,12 +3,13 @@ import { useLoaderData, useNavigation } from "react-router";
 
 import type { Route } from "./+types/_index";
 
-import { segmentHueSpace } from "~/lib/segmentHueSpace.server";
+import { collectStreamedSegments } from "~/lib/segmentHueSpace.server";
 import type { HueSegment } from "~/lib/types.server";
 import { normalizeHue, readPercentageParam } from "~/lib/color-utils";
 import { DEFAULT_LIGHTNESS, DEFAULT_SATURATION } from "~/lib/defaults";
 import { SwatchControls } from "~/components/SwatchControls";
 import { SwatchesSection } from "~/components/SwatchesSection";
+import { useStreamedSegments } from "~/hooks/useStreamedSegments";
 
 export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
@@ -16,7 +17,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const lightness = readPercentageParam(url, "l", DEFAULT_LIGHTNESS);
 
   try {
-    const segments = await segmentHueSpace({ saturation, lightness });
+    const segments = await collectStreamedSegments({ saturation, lightness });
     return { segments, saturation, lightness, error: null as string | null };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to load colors.";
@@ -32,8 +33,10 @@ export default function Index() {
   const [lValue, setLValue] = useState(lightness);
   const navigation = useNavigation();
   const isUpdatingSwatches = navigation.state !== "idle";
-  const [streamedSegments, setStreamedSegments] = useState(segments);
-  const [hasStreamedPartial, setHasStreamedPartial] = useState(false);
+  const {
+    segments: streamedSegments,
+    hasStreamedPartial,
+  } = useStreamedSegments({ navigation, initialSegments: segments });
 
   useEffect(() => {
     setSValue(saturation);
@@ -42,95 +45,6 @@ export default function Index() {
   useEffect(() => {
     setLValue(lightness);
   }, [lightness]);
-
-  useEffect(() => {
-    setStreamedSegments(segments);
-    setHasStreamedPartial(false);
-  }, [segments]);
-
-  useEffect(() => {
-    if (navigation.state === "idle" || !navigation.location) {
-      return;
-    }
-
-    setHasStreamedPartial(false);
-
-    const controller = new AbortController();
-    const { search } = navigation.location;
-
-    async function streamSegments() {
-      try {
-        const response = await fetch(`/swatches.stream${search}`, {
-          headers: { Accept: "text/x-ndjson" },
-          signal: controller.signal,
-        });
-
-        if (!response.ok || !response.body) {
-          throw new Error(`Unexpected response: ${response.status}`);
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) {
-            break;
-          }
-
-          buffer += decoder.decode(value, { stream: true });
-
-          let newlineIndex = buffer.indexOf("\n");
-          while (newlineIndex !== -1) {
-            const line = buffer.slice(0, newlineIndex).trim();
-            buffer = buffer.slice(newlineIndex + 1);
-
-            if (line) {
-              const payload = JSON.parse(line) as { segments: HueSegment[] };
-              setStreamedSegments(payload.segments);
-              setHasStreamedPartial(true);
-            }
-
-            newlineIndex = buffer.indexOf("\n");
-          }
-        }
-
-        buffer += decoder.decode();
-
-        let newlineIndex = buffer.indexOf("\n");
-        while (newlineIndex !== -1) {
-          const line = buffer.slice(0, newlineIndex).trim();
-          buffer = buffer.slice(newlineIndex + 1);
-
-          if (line) {
-            const payload = JSON.parse(line) as { segments: HueSegment[] };
-            setStreamedSegments(payload.segments);
-            setHasStreamedPartial(true);
-          }
-
-          newlineIndex = buffer.indexOf("\n");
-        }
-
-        const remaining = buffer.trim();
-        if (remaining) {
-          const payload = JSON.parse(remaining) as { segments: HueSegment[] };
-          setStreamedSegments(payload.segments);
-          setHasStreamedPartial(true);
-        }
-      } catch (streamError) {
-        if (!controller.signal.aborted) {
-          console.error("Failed to stream swatches", streamError);
-        }
-      }
-    }
-
-    streamSegments();
-
-    return () => {
-      controller.abort();
-    };
-  }, [navigation.state, navigation.location]);
 
   const swatches = useMemo(() => {
     const seen = new Map<string, HueSegment>();

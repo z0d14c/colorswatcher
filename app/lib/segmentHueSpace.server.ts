@@ -5,7 +5,8 @@ import type { HueSegment, SegmentHueSpaceOptions } from "./types.server";
 // Minimum width we will subdivide; narrower bands would be visually indistinguishable.
 const MIN_SPAN = 1;
 
-// Cache keyed by the saturation/lightness tuple to avoid redundant segmentation.
+// Cache keyed by the saturation/lightness tuple to avoid redundant segmentation
+// when computing the full set of segments up front (for SSR or tests).
 // Development rebuilds re-evaluate this module on every request, so the map clears
 // between refreshes; the production build runs inside a long-lived worker where the
 // memo persists and identical S/L pairs reuse the in-flight promise.
@@ -168,38 +169,6 @@ const mergeSegments = (segments: HueSegment[]): HueSegment[] => {
   return merged;
 };
 
-export async function segmentHueSpace({
-  saturation,
-  lightness,
-  sample, // primarily for the purpose of testing (skipping the dependency on the color api)
-}: SegmentHueSpaceOptions): Promise<HueSegment[]> {
-  const sampler = new AdaptiveSampler(
-    sample ?? ((hue) => getColorByHsl({ hue, saturation, lightness })),
-  );
-
-  const buildSegments = () => createSegments(sampler, saturation, lightness);
-
-  if (sample) {
-    return buildSegments();
-  }
-
-  const key = `${saturation}:${lightness}`;
-  const cached = memo.get(key);
-  if (cached) {
-    return cached;
-  }
-
-  const promise = buildSegments();
-  memo.set(key, promise);
-
-  try {
-    return await promise;
-  } catch (error) {
-    memo.delete(key);
-    throw error;
-  }
-}
-
 export function streamSegmentHueSpace({
   saturation,
   lightness,
@@ -226,4 +195,88 @@ export function streamSegmentHueSpace({
       })();
     },
   });
+}
+
+async function consumeStream(
+  stream: ReadableStream<Uint8Array>,
+): Promise<HueSegment[]> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let latest: HueSegment[] = [];
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+
+    let newlineIndex = buffer.indexOf("\n");
+    while (newlineIndex !== -1) {
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+
+      if (line) {
+        const payload = JSON.parse(line) as { segments: HueSegment[] };
+        latest = payload.segments;
+      }
+
+      newlineIndex = buffer.indexOf("\n");
+    }
+  }
+
+  buffer += decoder.decode();
+
+  let newlineIndex = buffer.indexOf("\n");
+  while (newlineIndex !== -1) {
+    const line = buffer.slice(0, newlineIndex).trim();
+    buffer = buffer.slice(newlineIndex + 1);
+
+    if (line) {
+      const payload = JSON.parse(line) as { segments: HueSegment[] };
+      latest = payload.segments;
+    }
+
+    newlineIndex = buffer.indexOf("\n");
+  }
+
+  const remaining = buffer.trim();
+  if (remaining) {
+    const payload = JSON.parse(remaining) as { segments: HueSegment[] };
+    latest = payload.segments;
+  }
+
+  return latest;
+}
+
+export async function collectStreamedSegments({
+  saturation,
+  lightness,
+  sample,
+}: SegmentHueSpaceOptions): Promise<HueSegment[]> {
+  if (sample) {
+    return consumeStream(
+      streamSegmentHueSpace({ saturation, lightness, sample }),
+    );
+  }
+
+  const key = `${saturation}:${lightness}`;
+  const cached = memo.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const promise = consumeStream(
+    streamSegmentHueSpace({ saturation, lightness }),
+  );
+  memo.set(key, promise);
+
+  try {
+    return await promise;
+  } catch (error) {
+    memo.delete(key);
+    throw error;
+  }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ColorDescriptor } from "../types.server";
-import { segmentHueSpace, streamSegmentHueSpace } from "../segmentHueSpace.server";
+import { collectStreamedSegments, streamSegmentHueSpace } from "../segmentHueSpace.server";
 import { normalizeHue } from "../utils.server";
 
 interface FakeRange {
@@ -44,7 +44,7 @@ const createFakeSampler = (ranges: FakeRange[]) => {
 
 describe("segmentHueSpace", () => {
   it("splits segments on hue boundaries", async () => {
-    const segments = await segmentHueSpace({
+    const segments = await collectStreamedSegments({
       saturation: 60,
       lightness: 50,
       sample: createFakeSampler([
@@ -66,7 +66,7 @@ describe("segmentHueSpace", () => {
   });
 
   it("merges wrap-around segments with the same name", async () => {
-    const segments = await segmentHueSpace({
+    const segments = await collectStreamedSegments({
       saturation: 60,
       lightness: 50,
       sample: createFakeSampler([
@@ -91,7 +91,7 @@ describe("segmentHueSpace", () => {
 
   it("returns a single segment for grayscale values", async () => {
     let calls = 0;
-    const segments = await segmentHueSpace({
+    const segments = await collectStreamedSegments({
       saturation: 0,
       lightness: 50,
       sample: async (hue) => {
